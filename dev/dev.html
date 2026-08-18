@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Flight Deck — dev harness</title>
+  <link rel="stylesheet" href="../sidepanel.css" />
+  <script>
+    // ---- Dev harness: stub chrome.storage + mock network calls ----
+    window.chrome = {
+      storage: {
+        local: {
+          _data: {
+            anthropicKey: "sk-ant-DEV-FAKE",
+            serpapiKey: "serpapi-DEV-FAKE",
+            model: "claude-opus-5",
+            openaiKey: "sk-openai-DEV-FAKE",
+            ttsVoice: "alloy",
+            speakResults: true,
+          },
+          async get(defaults) { return { ...defaults, ...this._data }; },
+          async set(obj) { Object.assign(this._data, obj); },
+        },
+      },
+    };
+
+    // Fake mic + recorder so the voice flow can be exercised without hardware.
+    window.chrome.tabs = { create: (o) => console.log("[dev] tabs.create:", o.url) };
+    window.chrome.runtime = { getURL: (p) => "../" + p };
+    navigator.permissions.query = async () => ({ state: "granted" });
+    navigator.mediaDevices.getUserMedia = async () => ({ getTracks: () => [{ stop() {} }] });
+    window.MediaRecorder = class {
+      constructor() { this.mimeType = "audio/webm"; }
+      start() {}
+      stop() {
+        this.ondataavailable?.({ data: new Blob(["fake"], { type: "audio/webm" }) });
+        this.onstop?.();
+      }
+    };
+
+    // Tiny valid silent WAV for the mocked TTS endpoint.
+    function silentWav() {
+      const sr = 8000, n = 800;
+      const buf = new ArrayBuffer(44 + n * 2);
+      const v = new DataView(buf);
+      const w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+      w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVE");
+      w(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+      w(36, "data"); v.setUint32(40, n * 2, true);
+      return new Blob([buf], { type: "audio/wav" });
+    }
+
+    const MOCK_PARSE = {
+      intent: "book",
+      origin: "SLC", destination: "AUS",
+      outbound_date: "2026-08-14", return_date: "2026-08-16",
+      trip_type: "round_trip", nonstop_only: false,
+      travel_class: 1, adults: 1, airlines: null, clarification_needed: null,
+      explore_window_start: null, explore_window_end: null,
+      explore_question: null, check_both_directions: false,
+    };
+
+    // Explore scenario: general nonstop-service question, open dates.
+    const MOCK_PARSE_EXPLORE = {
+      ...MOCK_PARSE,
+      intent: "explore",
+      origin: "PHL", destination: "ATH",
+      outbound_date: null, return_date: null,
+      nonstop_only: true, check_both_directions: true,
+      explore_window_start: null, explore_window_end: null,
+      explore_question: "Are there daily nonstop flights between Philadelphia and Athens in both directions?",
+    };
+
+    const MOCK_ASSESSMENT =
+      "American operates the only nonstop between Philadelphia and Athens, departing PHL around 7:35 PM and taking about 9h 45m; it appeared on every day sampled, consistent with daily summer service. The return leaves Athens mid-morning daily. One-way samples ran about $450-$520, so figure roughly $900-$1,000 round trip in economy.";
+
+    // Multi-airport parse used to exercise the no-results -> all-airlines fallback.
+    const MOCK_PARSE_LONDON = {
+      ...MOCK_PARSE,
+      origin: "PHL", destination: "LHR,LGW",
+      outbound_date: "2026-08-24", return_date: "2026-08-31",
+    };
+
+    // Clarification flow: "PHL to Orlando September 1" (no return date) -> question,
+    // then the follow-up answer merges into a complete parse.
+    const MOCK_PARSE_CLARIFY = {
+      ...MOCK_PARSE,
+      origin: "PHL", destination: "MCO",
+      outbound_date: "2026-09-01", return_date: null,
+      clarification_needed: "When are you returning?",
+    };
+    const MOCK_PARSE_MERGED = {
+      ...MOCK_PARSE_CLARIFY,
+      return_date: "2026-09-08", clarification_needed: null,
+    };
+
+    const MOCK_SUMMARY =
+      "The 8:05 AM Delta nonstop is the clear pick: it's the fastest option and only $12 more than the cheapest fare. If you'd rather save, the 6:10 AM American one-stop through DFW is $228 but adds nearly three hours. Prices are currently low for this route — booking now looks smart.";
+
+    function leg(airline, code, num, depId, depTime, arrId, arrTime, dur, logo) {
+      return {
+        departure_airport: { name: depId, id: depId, time: depTime },
+        arrival_airport: { name: arrId, id: arrId, time: arrTime },
+        duration: dur, airline, airline_logo: logo,
+        flight_number: `${code} ${num}`, travel_class: "Economy", airplane: "Boeing 737",
+      };
+    }
+    const DL_LOGO = "https://www.gstatic.com/flights/airline_logos/70px/DL.png";
+    const UA_LOGO = "https://www.gstatic.com/flights/airline_logos/70px/UA.png";
+    const AA_LOGO = "https://www.gstatic.com/flights/airline_logos/70px/AA.png";
+
+    const MOCK_OUTBOUND = {
+      search_metadata: { google_flights_url: "https://www.google.com/travel/flights" },
+      price_insights: { lowest_price: 228, price_level: "low", typical_price_range: [260, 420] },
+      best_flights: [
+        {
+          flights: [leg("Delta", "DL", "1402", "SLC", "2026-08-14 08:05", "AUS", "2026-08-14 11:55", 170, DL_LOGO)],
+          layovers: [], total_duration: 170, price: 240, type: "Round trip",
+          airline_logo: DL_LOGO, departure_token: "tok-dl-nonstop",
+        },
+        {
+          flights: [
+            leg("United", "UA", "355", "SLC", "2026-08-14 09:40", "DEN", "2026-08-14 11:02", 82, UA_LOGO),
+            leg("United", "UA", "2011", "DEN", "2026-08-14 12:10", "AUS", "2026-08-14 15:12", 122, UA_LOGO),
+          ],
+          layovers: [{ id: "DEN", duration: 68, name: "Denver" }],
+          total_duration: 272, price: 232, type: "Round trip",
+          airline_logo: UA_LOGO, departure_token: "tok-ua-den",
+        },
+      ],
+      other_flights: [
+        {
+          flights: [
+            leg("American", "AA", "2890", "SLC", "2026-08-14 06:10", "DFW", "2026-08-14 09:45", 155, AA_LOGO),
+            leg("American", "AA", "1178", "DFW", "2026-08-14 11:05", "AUS", "2026-08-14 12:08", 63, AA_LOGO),
+          ],
+          layovers: [{ id: "DFW", duration: 80, name: "Dallas Fort Worth" }],
+          total_duration: 298, price: 228, type: "Round trip",
+          airline_logo: AA_LOGO, departure_token: "tok-aa-dfw",
+        },
+        {
+          flights: [
+            leg("Delta", "DL", "980", "SLC", "2026-08-14 13:30", "ATL", "2026-08-14 19:05", 215, DL_LOGO),
+            leg("Delta", "DL", "1544", "ATL", "2026-08-14 20:15", "AUS", "2026-08-14 21:20", 125, DL_LOGO),
+          ],
+          layovers: [{ id: "ATL", duration: 70, name: "Atlanta" }],
+          total_duration: 410, price: 301, type: "Round trip",
+          airline_logo: DL_LOGO, departure_token: "tok-dl-atl",
+        },
+      ],
+    };
+
+    const MOCK_RETURN = {
+      search_metadata: { google_flights_url: "https://www.google.com/travel/flights" },
+      best_flights: [
+        {
+          flights: [leg("Delta", "DL", "1405", "AUS", "2026-08-16 17:20", "SLC", "2026-08-16 19:25", 185, DL_LOGO)],
+          layovers: [], total_duration: 185, price: 240, type: "Round trip",
+          airline_logo: DL_LOGO, booking_token: "book-1",
+        },
+      ],
+      other_flights: [
+        {
+          flights: [
+            leg("Delta", "DL", "2231", "AUS", "2026-08-16 12:40", "MSP", "2026-08-16 15:35", 175, DL_LOGO),
+            leg("Delta", "DL", "889", "MSP", "2026-08-16 17:00", "SLC", "2026-08-16 18:40", 160, DL_LOGO),
+          ],
+          layovers: [{ id: "MSP", duration: 85, name: "Minneapolis" }],
+          total_duration: 420, price: 264, type: "Round trip",
+          airline_logo: DL_LOGO, booking_token: "book-2",
+        },
+      ],
+    };
+
+    const realFetch = window.fetch.bind(window);
+    window.fetch = async (url, opts) => {
+      const u = String(url);
+      const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+      if (u.includes("api.openai.com/v1/audio/transcriptions")) {
+        await delay(300);
+        return new Response(JSON.stringify({ text: "SLC to Austin next Friday, back Sunday evening" }),
+          { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (u.includes("api.openai.com/v1/audio/speech")) {
+        await delay(300);
+        return new Response(silentWav(), { status: 200, headers: { "content-type": "audio/wav" } });
+      }
+      if (u.includes("api.anthropic.com")) {
+        await delay(400);
+        const body = JSON.parse(opts.body);
+        const isParse = !!body.output_config?.format;
+        const msgs = body.messages || [];
+        const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+        const userText = String(lastUser?.content || "");
+        let parse = MOCK_PARSE;
+        if (/athens/i.test(userText)) parse = MOCK_PARSE_EXPLORE;
+        else if (/orlando/i.test(userText)) parse = MOCK_PARSE_CLARIFY;
+        else if (msgs.length >= 3 && /september|sept/i.test(userText)) parse = MOCK_PARSE_MERGED; // answer turn with history present
+        else if (/london|philadelphia/i.test(userText)) parse = MOCK_PARSE_LONDON;
+        // Non-parse calls: the explore assessment payload carries a "question" field.
+        const summaryText = /"question"/.test(userText) ? MOCK_ASSESSMENT : MOCK_SUMMARY;
+        return new Response(JSON.stringify({
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: isParse ? JSON.stringify(parse) : summaryText }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (u.includes("serpapi.com")) {
+        await delay(500);
+        const isReturn = u.includes("departure_token");
+        // Simulate the DL/UA/AA filter finding nothing on the London route;
+        // the retry without include_airlines succeeds.
+        if (!isReturn && u.includes("LHR") && u.includes("include_airlines")) {
+          return new Response(JSON.stringify({ error: "Google Flights hasn't returned any results for this query." }),
+            { status: 400, headers: { "content-type": "application/json" } });
+        }
+        return new Response(JSON.stringify(isReturn ? MOCK_RETURN : MOCK_OUTBOUND),
+          { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return realFetch(url, opts);
+    };
+  </script>
+</head>
+<body>
+  <div id="mount"></div>
+  <script>
+    // Load the real sidepanel markup, then the real logic.
+    realFetch("../sidepanel.html", { cache: "no-store" })
+      .then((r) => r.text())
+      .then((html) => {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        document.getElementById("mount").replaceWith(...doc.body.children);
+        // Strip the script tag that came with the body (we load it ourselves).
+        document.querySelectorAll("script[src='sidepanel.js']").forEach((s) => s.remove());
+        // Fix root-relative asset paths for the /dev/ context.
+        document.querySelectorAll("img[src^='icons/']").forEach((img) => (img.src = "../" + img.getAttribute("src")));
+        const s = document.createElement("script");
+        s.src = "../sidepanel.js";
+        document.body.appendChild(s);
+      });
+  </script>
+</body>
+</html>

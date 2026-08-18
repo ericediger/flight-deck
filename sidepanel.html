@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flight Deck</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-title">
+      <span class="plane-glyph">&#9992;</span>
+      <h1>Flight Deck</h1>
+    </div>
+    <div class="header-actions">
+      <button id="resetBtn" class="icon-btn" title="Start over">&#8634;</button>
+      <button id="settingsBtn" class="icon-btn" title="Settings">&#9881;</button>
+    </div>
+  </header>
+
+  <!-- Settings -->
+  <section id="settingsPanel" class="settings-panel hidden">
+    <h2>Settings</h2>
+    <label class="field">
+      <span>Anthropic API key</span>
+      <input type="password" id="anthropicKey" placeholder="sk-ant-..." autocomplete="off" />
+    </label>
+    <label class="field">
+      <span>SerpApi API key</span>
+      <input type="password" id="serpapiKey" placeholder="SerpApi key" autocomplete="off" />
+    </label>
+    <label class="field">
+      <span>Claude model</span>
+      <select id="modelSelect">
+        <option value="claude-opus-5">Claude Opus 5 (best)</option>
+        <option value="claude-sonnet-5">Claude Sonnet 5</option>
+        <option value="claude-haiku-4-5">Claude Haiku 4.5 (fastest/cheapest)</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>OpenAI API key (voice &mdash; optional)</span>
+      <input type="password" id="openaiKey" placeholder="sk-..." autocomplete="off" />
+    </label>
+    <div class="field-pair">
+      <label class="field">
+        <span>Voice</span>
+        <select id="voiceSelect">
+          <option value="alloy">Alloy</option>
+          <option value="coral">Coral</option>
+          <option value="echo">Echo</option>
+          <option value="nova">Nova</option>
+          <option value="onyx">Onyx</option>
+        </select>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="speakResults" checked />
+        <span>Speak results aloud</span>
+      </label>
+    </div>
+    <div class="settings-actions">
+      <button id="saveSettings" class="btn primary">Save</button>
+      <span id="settingsStatus" class="settings-status"></span>
+    </div>
+    <p class="settings-note">Keys are stored locally in this browser profile (chrome.storage.local) and sent only to api.anthropic.com, serpapi.com, and api.openai.com.</p>
+  </section>
+
+  <!-- Search -->
+  <section class="search-panel">
+    <textarea id="queryInput" rows="2"
+      placeholder="e.g. SLC to Austin next Friday, back Sunday evening, nonstop"></textarea>
+    <div class="search-row">
+      <div class="chips" id="airlineChips">
+        <button class="chip active" data-code="DL" title="Delta">DL</button>
+        <button class="chip active" data-code="UA" title="United">UA</button>
+        <button class="chip active" data-code="AA" title="American">AA</button>
+      </div>
+      <div class="search-actions">
+        <button id="micBtn" class="mic-btn" title="Speak your search">&#127908;</button>
+        <button id="searchBtn" class="btn primary">Search</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Status -->
+  <div id="statusBar" class="status-bar hidden">
+    <span class="spinner"></span>
+    <span id="statusText"></span>
+  </div>
+
+  <!-- Clarifying question (multi-turn) -->
+  <div id="askBar" class="ask-bar hidden"></div>
+
+  <!-- Parsed query recap -->
+  <div id="parsedBar" class="parsed-bar hidden"></div>
+
+  <!-- AI summary -->
+  <div id="summaryBox" class="summary-box hidden"></div>
+
+  <!-- Price insights -->
+  <div id="insightsBar" class="insights-bar hidden"></div>
+
+  <!-- Search notices (e.g. airline-filter fallback) -->
+  <div id="noticeBar" class="notice-bar hidden"></div>
+
+  <!-- Results -->
+  <section id="resultsPanel" class="results-panel hidden">
+    <div class="results-header">
+      <h2 id="resultsTitle">Flights</h2>
+      <div class="results-controls">
+        <button id="backBtn" class="btn ghost hidden">&#8592; Outbound</button>
+        <select id="sortSelect" title="Sort">
+          <option value="best">Best</option>
+          <option value="price">Cheapest</option>
+          <option value="duration">Fastest</option>
+        </select>
+      </div>
+    </div>
+    <div id="tripSummary" class="trip-summary hidden">
+      <div id="tripLines"></div>
+      <button id="bookTripBtn" class="btn book-btn hidden">Book This Trip &#9889;</button>
+    </div>
+    <div id="resultsList" class="results-list"></div>
+    <a id="gfLink" class="gf-link hidden" target="_blank" rel="noopener">Open this search in Google Flights &#8599;</a>
+  </section>
+
+  <!-- Error -->
+  <div id="errorBox" class="error-box hidden"></div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>
