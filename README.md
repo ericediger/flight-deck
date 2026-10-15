@@ -1,5 +1,9 @@
 # Flight Deck
 
+[![Watch the two-minute explainer video](media/explainer-poster.jpg)](https://github.com/ericediger/flight-deck/blob/main/media/flight-deck-explainer.mp4)
+
+**[▶ Watch the 2-minute explainer](https://github.com/ericediger/flight-deck/blob/main/media/flight-deck-explainer.mp4)**
+
 A Chrome side-panel extension for quick natural-language and **voice** flight lookups on **Delta, United, and American**. Type or speak a request — Claude parses it, SerpApi's Google Flights engine returns real fares, and a short conversational recommendation (spoken aloud if you like) sits on top.
 
 Ask two kinds of questions:
